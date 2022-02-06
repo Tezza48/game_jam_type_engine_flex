@@ -2,7 +2,7 @@ mod entity;
 
 use std::time::{Duration, Instant};
 
-use entity::{Component, Entity};
+use entity::{Component, Entity, FindEntityWithComponent, FindEntityWithComponentMut};
 use minifb::{Scale, ScaleMode, Window, WindowOptions};
 
 struct TimeResources {
@@ -14,6 +14,33 @@ struct TimeResources {
 }
 
 impl Component for TimeResources {}
+
+struct Position {
+    x: i32,
+    y: i32,
+}
+
+impl Component for Position {}
+
+struct Sprite {
+    data: Vec<u32>,
+    width: u32,
+    height: u32,
+    anchor_x: u32,
+    anchor_y: u32,
+}
+
+impl Component for Sprite {}
+
+struct RenderTarget;
+
+impl Component for RenderTarget {}
+
+struct WobbleMove {
+    amplitude: f32,
+}
+
+impl Component for WobbleMove {}
 
 pub fn start() {
     let mut resources = Entity::new();
@@ -95,7 +122,7 @@ pub fn start() {
     });
 
     {
-        let time_resources = resources.get_component_mut::<TimeResources>();
+        let time_resources = resources.get_component_mut::<TimeResources>().unwrap();
 
         time_resources.start_time_instant = std::time::Instant::now();
         time_resources.last_frame_instant = std::time::Instant::now();
@@ -113,23 +140,22 @@ pub fn start() {
             .iter()
             .for_each(|f| f(&mut resources, &mut entities));
 
-        let render_target_entity =
-            if let Some(e) = entities.iter().find(|e| e.has_component::<RenderTarget>()) {
-                e
-            } else {
-                panic!("For some reason there's no render target entity")
-            };
+        if let Some(entity) = entities.iter()
+        .find(|e| e.has_component::<RenderTarget>())
+         {
+            let sprite: &Sprite = entity.get_component().unwrap();
 
-        let sprite = render_target_entity.get_component::<Sprite>();
-
-        window
-            .update_with_buffer(&sprite.data, sprite.width as usize, sprite.height as usize)
-            .unwrap();
+            window
+                .update_with_buffer(&sprite.data, sprite.width as usize, sprite.height as usize)
+                .unwrap();
+        } else {
+            panic!("For some reason there's no render target entity")
+        };
     }
 }
 
 fn sys_time_resources(resources: &mut Entity, _: &mut Vec<Entity>) {
-    let time_resources: &mut TimeResources = resources.get_component_mut();
+    let time_resources: &mut TimeResources = resources.get_component_mut().unwrap();
 
     time_resources.last_frame_instant = time_resources.this_frame_instant;
     time_resources.this_frame_instant = std::time::Instant::now();
@@ -140,89 +166,75 @@ fn sys_time_resources(resources: &mut Entity, _: &mut Vec<Entity>) {
         time_resources.this_frame_instant - time_resources.start_time_instant;
 }
 
-struct Position {
-    x: i32,
-    y: i32,
-}
-
-impl Component for Position {}
-
-struct Sprite {
-    data: Vec<u32>,
-    width: u32,
-    height: u32,
-    anchor_x: u32,
-    anchor_y: u32,
-}
-
-impl Component for Sprite {}
-
-struct RenderTarget;
-
-impl Component for RenderTarget {}
-
-struct WobbleMove {
-    amplitude: f32,
-}
-
-impl Component for WobbleMove {}
-
 fn sys_clear_render_target(_: &mut Entity, entities: &mut Vec<Entity>) {
-    let render_target_entity = if let Some(e) = entities
+    if let Some(render_target_entity) = entities
         .iter_mut()
-        .find(|e| e.has_component::<RenderTarget>())
+        .find_entity_with_component_mut::<RenderTarget>()
     {
-        e
+        if let Some(sprite) = render_target_entity.get_component_mut::<Sprite>() {
+            sprite.data.fill(0xff000000);
+        } else {
+            panic!("RenderTarget entity didn't have a sprite component");
+        }
     } else {
-        return;
+        panic!("No RenderTarget entity exists");
     };
-
-    let sprite = render_target_entity.get_component_mut::<Sprite>();
-    sprite.data.fill(0xff000000);
 }
 
 fn sys_draw_sprites(_: &mut Entity, entities: &mut Vec<Entity>) {
     // TODO WT: Easier way of taking and replacing a component.
-    let mut target = {
-        let render_target_entity = if let Some(e) = entities
-            .iter_mut()
-            .find(|e| e.has_component::<RenderTarget>())
-        {
-            e
-        } else {
-            return;
-        };
-        render_target_entity.remove_component::<Sprite>()
+    // TODO WT: Maybe something which takes the component and replaces it once dropped.
+    let mut target = if let Some(e) = entities
+        .iter_mut()
+        .find_entity_with_component_mut::<RenderTarget>()
+    {
+        e.remove_component::<Sprite>()
+    } else {
+        return;
     };
 
     for entity in entities.iter() {
-        if !(entity.has_component::<Sprite>() && entity.has_component::<Position>()) {
-            continue;
+        if let (Some(sprite), Some(pos)) = (
+            entity.get_component::<Sprite>(),
+            entity.get_component::<Position>(),
+        ) {
+            draw_sprite(&mut target, pos, sprite);
         }
-
-        let sprite = entity.get_component::<Sprite>();
-        let pos = entity.get_component::<Position>();
-
-        draw_sprite(&mut target, pos, sprite);
     }
 
-    let render_target_entity = if let Some(e) = entities.iter_mut().find(|e| e.has_component::<RenderTarget>()) { e } else { return; };
-    render_target_entity.add_component(target);
+    if let Some(e) = entities
+        .iter_mut()
+        .find_entity_with_component_mut::<RenderTarget>()
+    {
+        e.add_component(target);
+    }
 }
 
 fn sys_wobble_move(resources: &mut Entity, entities: &mut Vec<Entity>) {
-    let render_target_entity = if let Some(e) = entities.iter().find(|e| e.has_component::<RenderTarget>()) { e } else { return; };
-    let width = { render_target_entity.get_component::<Sprite>().width };
+    let width = if let Some(e) = entities.iter().find_entity_with_component::<RenderTarget>() {
+        e.get_component::<Sprite>()
+            .unwrap()
+            .width
+    } else {
+        return;
+    };
 
-    let total_time = resources.get_component::<TimeResources>().total_time.as_secs_f32();
+    let total_time = resources
+        .get_component::<TimeResources>()
+        .unwrap()
+        .total_time
+        .as_secs_f32();
 
     for entity in entities.iter_mut() {
-        if !(entity.has_component::<WobbleMove>() && entity.has_component::<Position>()) {continue;}
+        let amplitude = if let Some(wobble) = entity.get_component::<WobbleMove>() {
+            wobble.amplitude
+        } else {
+            continue;
+        };
 
-        let amplitude = entity.get_component::<WobbleMove>().amplitude;
-
-        let pos = entity.get_component_mut::<Position>();
-        pos.x = (width / 2) as i32 + (total_time.sin() * amplitude) as i32;
+        if let Some(pos) = entity.get_component_mut::<Position>() {
+            pos.x = (width / 2) as i32 + (total_time.sin() * amplitude) as i32;
+        }
     }
 }
 

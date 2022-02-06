@@ -21,20 +21,20 @@ impl Entity {
     }
 
     // TODO WT: These could just return Option, makes determining if an entity has a component easier
-    pub fn get_component<T: Sized + Any + Component>(&self) -> &T {
-        self.components
-            .get(&TypeId::of::<T>())
-            .unwrap()
-            .downcast_ref()
-            .unwrap()
+    pub fn get_component<T: Sized + Any + Component>(&self) -> Option<&T> {
+        if let Some(b) = self.components.get(&TypeId::of::<T>()) {
+            b.downcast_ref()
+        } else {
+            None
+        }
     }
 
-    pub fn get_component_mut<T: Sized + Any + Component>(&mut self) -> &mut T {
-        self.components
-            .get_mut(&TypeId::of::<T>())
-            .unwrap()
-            .downcast_mut()
-            .unwrap()
+    pub fn get_component_mut<T: Sized + Any + Component>(&mut self) -> Option<&mut T> {
+        if let Some(b) = self.components.get_mut(&TypeId::of::<T>()) {
+            b.downcast_mut()
+        } else {
+            None
+        }
     }
 
     pub fn has_component<T: Sized + Any + Component>(&self) -> bool {
@@ -42,9 +42,34 @@ impl Entity {
     }
 
     pub fn remove_component<T: Sized + Any + Component>(&mut self) -> T {
-        *self.components.remove(&TypeId::of::<T>())
+        *self
+            .components
+            .remove(&TypeId::of::<T>())
             .unwrap()
             .downcast::<T>()
             .unwrap()
+    }
+}
+
+pub trait FindEntityWithComponent {
+    fn find_entity_with_component<T: Sized + Any + Component>(&mut self) -> Option<&Entity>;
+}
+
+impl<'a> FindEntityWithComponent for std::slice::Iter<'a, Entity> {
+    fn find_entity_with_component<T: Sized + Any + Component>(&mut self) -> Option<&Entity> {
+        self.find(|e| e.has_component::<T>())
+    }
+}
+
+pub trait FindEntityWithComponentMut {
+    fn find_entity_with_component_mut<T: Sized + Any + Component>(&mut self)
+        -> Option<&mut Entity>;
+}
+
+impl<'a> FindEntityWithComponentMut for std::slice::IterMut<'a, Entity> {
+    fn find_entity_with_component_mut<T: Sized + Any + Component>(
+        &mut self,
+    ) -> Option<&mut Entity> {
+        self.find(|e| e.has_component::<T>())
     }
 }
